@@ -20,10 +20,10 @@ type MemDBOptions struct {
 	HashSize uint64
 }
 
-// newMemDBOptions create a mew MemDBOptions
-func newMemDBOptions(path string, hashSize uint64) *MemDBOptions {
+// NewMemDBOptions create a mew MemDBOptions
+func NewMemDBOptions(path string, hashSize uint64) *MemDBOptions {
 	return &MemDBOptions{
-		Path: path,
+		Path:     path,
 		HashSize: hashSize,
 	}
 }
@@ -107,22 +107,23 @@ func (m *MemDB) Set(key []byte, value []byte) error {
 		return err
 	}
 
-	if err := m.set(key, value); err != nil {
+	if err := m.set(key, value, int64(pos)); err != nil {
 		return err
 	}
 
-	pos += 4 + uint32(len(key)) + 4
+	pos += 4 + uint32(len(key))
 	m.memIndex[hashKey] = pos
 
 	return nil
 }
 
 // set sets key and value data to data file
-func (m *MemDB) set(key []byte, value []byte) error {
-	if err := m.write(key); err != nil {
+func (m *MemDB) set(key []byte, value []byte, offset int64) error {
+	if err := m.write(key, offset); err != nil {
 		return err
 	}
-	if err := m.write(value); err != nil {
+	valueOffset := offset + 4 + int64(len(key))
+	if err := m.write(value, valueOffset); err != nil {
 		return err
 	}
 	return nil
@@ -149,9 +150,9 @@ func (m *MemDB) createMemIndex() {
 			panic("error")
 		}
 
-		size := binary.BigEndian.Uint32(sizeByte)
+		size := binary.LittleEndian.Uint32(sizeByte)
 		pos += 4
-		buf, err := m.read(size, pos+4) // pos = start + key_size, size = key + value_size
+		buf, err := m.read(size+4, pos) // pos = start + key_size, size = key + value_size
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -163,10 +164,8 @@ func (m *MemDB) createMemIndex() {
 		valueSize := buf[len(buf)-4:]
 
 		hashKey := m.hash(key)
-		pos += uint32(len(buf)) // pos = start + key_size + key + value_size
-		m.memIndex[hashKey] = pos
-
-		pos += binary.BigEndian.Uint32(valueSize) // pos = start + key_size + key + value_size + value = next start
+		m.memIndex[hashKey] = pos + uint32(len(buf)) - 4
+		pos += uint32(len(buf)) + binary.LittleEndian.Uint32(valueSize) // pos = start + key_size + key + value_size + value = next start
 	}
 }
 
@@ -177,8 +176,13 @@ func (m *MemDB) get(pos uint32) (value []byte, err error) {
 		return []byte{}, err
 	}
 
-	size := binary.BigEndian.Uint32(sizeByte)
-	return m.read(size, pos+4)
+	size := binary.LittleEndian.Uint32(sizeByte)
+
+	value, err = m.read(size, pos+4)
+	if err == io.EOF {
+		err = nil
+	}
+	return
 }
 
 // read reads `size` bytes from data file in `pos` offset
@@ -188,8 +192,9 @@ func (m *MemDB) read(size uint32, pos uint32) (data []byte, err error) {
 	m.mu.RLock()
 	n, err := m.datafd.ReadAt(data, int64(pos))
 	m.mu.RUnlock()
+
 	if err != nil {
-		return []byte{}, err
+		return
 	}
 	if uint32(n) != size {
 		return []byte{}, errors.New("failed to read value")
@@ -200,14 +205,14 @@ func (m *MemDB) read(size uint32, pos uint32) (data []byte, err error) {
 
 // write writes data to data file
 // first, write the size of data, second write data
-func (m *MemDB) write(data []byte) error {
+func (m *MemDB) write(data []byte, offset int64) error {
 	buf := make([]byte, 4)
-	binary.PutVarint(buf, int64(len(data)))
+	binary.LittleEndian.PutUint32(buf[:], uint32(len(data)))
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	n, err := m.datafd.Write(buf)
+	n, err := m.datafd.WriteAt(buf, offset)
 	if err != nil {
 		return err
 	}
@@ -215,7 +220,7 @@ func (m *MemDB) write(data []byte) error {
 		return errors.New("Failed to write value size")
 	}
 
-	n, err = m.datafd.Write(data)
+	n, err = m.datafd.WriteAt(data, offset+4)
 	if err != nil {
 		return err
 	}
@@ -231,7 +236,7 @@ func (m *MemDB) hash(key []byte) uint32 {
 
 // openDataFile open data file
 func (m *MemDB) openDataFile() error {
-	datafile, err := os.OpenFile(m.o.Path, os.O_WRONLY|os.O_CREATE, 0644)
+	datafile, err := os.OpenFile(m.o.Path, os.O_APPEND|os.O_RDWR, os.ModeAppend)
 	if err != nil {
 		return err
 	}
