@@ -14,17 +14,33 @@ var (
 	ErrRetry    = errors.New("memdb index is creating, please retry again after a while")
 )
 
+// MemDBOptions is option of MemDB
 type MemDBOptions struct {
 	Path     string
 	HashSize uint64
 }
 
-func newMemDBOptions(path string) *MemDBOptions {
+// newMemDBOptions create a mew MemDBOptions
+func newMemDBOptions(path string, hashSize uint64) *MemDBOptions {
 	return &MemDBOptions{
 		Path: path,
+		HashSize: hashSize,
 	}
 }
 
+// isValid checks MemDBOptions
+func (o *MemDBOptions) isValid() error {
+	if o.Path == "" {
+		return errors.New("file path is empty")
+	}
+	if o.HashSize <= 0 {
+		return errors.New("hash size must bt greater than 0")
+	}
+
+	return nil
+}
+
+// MemDB is in-memory key/value index
 type MemDB struct {
 	mu        sync.RWMutex
 	o         *MemDBOptions
@@ -33,6 +49,7 @@ type MemDB struct {
 	isWriting uint32
 }
 
+// NewMemDB creates a MemDB struct
 func NewMemDB(o *MemDBOptions) *MemDB {
 	return &MemDB{
 		o:        o,
@@ -40,12 +57,13 @@ func NewMemDB(o *MemDBOptions) *MemDB {
 	}
 }
 
+// Open opens data file, and creates memory index
 func (m *MemDB) Open() error {
-	if m.o == nil {
-		return errors.New("options can't nil")
+	if err := m.o.isValid(); err != nil {
+		return err
 	}
-	err := m.openDataFile()
-	if err != nil {
+
+	if err := m.openDataFile(); err != nil {
 		return err
 	}
 
@@ -54,10 +72,12 @@ func (m *MemDB) Open() error {
 	return nil
 }
 
+// Close closes data file
 func (m *MemDB) Close() {
 	m.closeDataFile()
 }
 
+// Get returns the value for given key
 func (m *MemDB) Get(key []byte) (value []byte, err error) {
 	if len(key) == 0 {
 		return []byte{}, errors.New("key is empty")
@@ -79,6 +99,7 @@ func (m *MemDB) Get(key []byte) (value []byte, err error) {
 	return m.get(pos)
 }
 
+// Set writes key and value to data file, and add index in memory
 func (m *MemDB) Set(key []byte, value []byte) error {
 	hashKey := m.hash(key)
 	pos, err := m.dataSize()
@@ -96,6 +117,7 @@ func (m *MemDB) Set(key []byte, value []byte) error {
 	return nil
 }
 
+// set sets key and value data to data file
 func (m *MemDB) set(key []byte, value []byte) error {
 	if err := m.write(key); err != nil {
 		return err
@@ -106,6 +128,7 @@ func (m *MemDB) set(key []byte, value []byte) error {
 	return nil
 }
 
+// createMemIndex creates index read data from data file
 func (m *MemDB) createMemIndex() {
 	var (
 		size uint32
@@ -147,6 +170,7 @@ func (m *MemDB) createMemIndex() {
 	}
 }
 
+// get returns value for given position
 func (m *MemDB) get(pos uint32) (value []byte, err error) {
 	sizeByte, err := m.read(4, pos)
 	if err != nil {
@@ -157,6 +181,7 @@ func (m *MemDB) get(pos uint32) (value []byte, err error) {
 	return m.read(size, pos+4)
 }
 
+// read reads `size` bytes from data file in `pos` offset
 func (m *MemDB) read(size uint32, pos uint32) (data []byte, err error) {
 	data = make([]byte, size)
 
@@ -173,6 +198,8 @@ func (m *MemDB) read(size uint32, pos uint32) (data []byte, err error) {
 	return
 }
 
+// write writes data to data file
+// first, write the size of data, second write data
 func (m *MemDB) write(data []byte) error {
 	buf := make([]byte, 4)
 	binary.PutVarint(buf, int64(len(data)))
@@ -202,6 +229,7 @@ func (m *MemDB) hash(key []byte) uint32 {
 	return Hash(key, 0xf00)
 }
 
+// openDataFile open data file
 func (m *MemDB) openDataFile() error {
 	datafile, err := os.OpenFile(m.o.Path, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
@@ -213,10 +241,12 @@ func (m *MemDB) openDataFile() error {
 	return nil
 }
 
+// closeDataFile close data file
 func (m *MemDB) closeDataFile() {
 	m.datafd.Close()
 }
 
+// dataSize returns the size of data file
 func (m *MemDB) dataSize() (size uint32, err error) {
 	finfo, err := m.datafd.Stat()
 	if err != nil {
