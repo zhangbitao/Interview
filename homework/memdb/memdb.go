@@ -45,6 +45,7 @@ type MemDB struct {
 	mu        sync.RWMutex
 	o         *MemDBOptions
 	datafd    *os.File
+	mapLock   sync.Mutex
 	memIndex  map[uint32]uint32 // hash key => data position
 	isWriting uint32
 }
@@ -89,7 +90,10 @@ func (m *MemDB) Get(key []byte) (value []byte, err error) {
 	)
 
 	hashKey := m.hash(key)
-	if pos, exist = m.memIndex[hashKey]; !exist {
+	m.mapLock.Lock()
+	pos, exist = m.memIndex[hashKey]
+	m.mapLock.Unlock()
+	if !exist {
 		if atomic.LoadUint32(&m.isWriting) > 0 {
 			return []byte{}, ErrRetry
 		}
@@ -112,7 +116,10 @@ func (m *MemDB) Set(key []byte, value []byte) error {
 	}
 
 	pos += 4 + uint32(len(key))
+
+	m.mapLock.Lock()
 	m.memIndex[hashKey] = pos
+	m.mapLock.Unlock()
 
 	return nil
 }
@@ -164,7 +171,10 @@ func (m *MemDB) createMemIndex() {
 		valueSize := buf[len(buf)-4:]
 
 		hashKey := m.hash(key)
+		m.mapLock.Lock()
 		m.memIndex[hashKey] = pos + uint32(len(buf)) - 4
+		m.mapLock.Unlock()
+
 		pos += uint32(len(buf)) + binary.LittleEndian.Uint32(valueSize) // pos = start + key_size + key + value_size + value = next start
 	}
 }
