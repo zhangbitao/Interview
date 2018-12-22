@@ -20,7 +20,7 @@ type MemDBOptions struct {
 	HashSize uint64
 }
 
-// NewMemDBOptions create a mew MemDBOptions
+// NewMemDBOptions creates a new MemDBOptions
 func NewMemDBOptions(path string, hashSize uint64) *MemDBOptions {
 	return &MemDBOptions{
 		Path:     path,
@@ -28,7 +28,7 @@ func NewMemDBOptions(path string, hashSize uint64) *MemDBOptions {
 	}
 }
 
-// isValid checks MemDBOptions
+// isValid checks options
 func (o *MemDBOptions) isValid() error {
 	if o.Path == "" {
 		return errors.New("file path is empty")
@@ -169,7 +169,7 @@ func (m *MemDB) createMemIndex() {
 	}
 }
 
-// get returns value for given position
+// get returns value for a given position
 func (m *MemDB) get(pos uint32) (value []byte, err error) {
 	sizeByte, err := m.read(4, pos)
 	if err != nil {
@@ -234,7 +234,7 @@ func (m *MemDB) hash(key []byte) uint32 {
 	return Hash(key, 0xf00)
 }
 
-// openDataFile open data file
+// openDataFile opens data file
 func (m *MemDB) openDataFile() error {
 	datafile, err := os.OpenFile(m.o.Path, os.O_APPEND|os.O_RDWR, os.ModeAppend)
 	if err != nil {
@@ -246,7 +246,7 @@ func (m *MemDB) openDataFile() error {
 	return nil
 }
 
-// closeDataFile close data file
+// closeDataFile closes data file
 func (m *MemDB) closeDataFile() {
 	m.datafd.Close()
 }
